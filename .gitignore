@@ -19,3 +19,6 @@ data/
 
 # Mac
 .DS_Store
+
+# Local setup docs (private)
+SETUP.md
