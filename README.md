@@ -6,8 +6,3 @@ Personal learning repo for quantitative finance and algorithmic trading concepts
 - `src/qtr/` — reusable Python modules (OOP)
 - `notebooks/` — learning notebooks and experiments
 - `data/` — local data (gitignored, never committed)
-
-## Setup
-Activate the shared AJ Capital venv:
-
-    source /Users/aarjavjain/Projects/AJ_Capital/AJ_Capital_py_venv/bin/activate
