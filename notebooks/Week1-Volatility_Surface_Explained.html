@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Volatility Surfaces, Explained from Zero</title>
+<script>
+MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+  options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'] }
+};
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+<style>
+  :root { --fg:#1b1f24; --muted:#57606a; --bg:#ffffff; --soft:#f6f8fa;
+           --border:#d0d7de; --accent:#0969da; --code:#eaeef2; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg:#e6edf3; --muted:#9198a1; --bg:#0d1117; --soft:#161b22;
+             --border:#30363d; --accent:#4493f8; --code:#1f2630; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+          font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+          line-height:1.65; font-size:17px; }
+  main { max-width:880px; margin:0 auto; padding:48px 24px 120px; }
+  h1,h2,h3,h4 { line-height:1.25; margin-top:1.8em; margin-bottom:.6em; }
+  h1 { font-size:2.1em; margin-top:.2em; }
+  h2 { font-size:1.5em; padding-bottom:.3em; border-bottom:1px solid var(--border); }
+  h3 { font-size:1.2em; }
+  p, li { color:var(--fg); }
+  a { color:var(--accent); text-decoration:none; }
+  a:hover { text-decoration:underline; }
+  hr { border:none; border-top:1px solid var(--border); margin:2.4em 0; }
+  blockquote { margin:1.2em 0; padding:.4em 1.1em; color:var(--muted);
+                border-left:4px solid var(--accent); background:var(--soft); border-radius:6px; }
+  blockquote p:first-child { margin-top:0; } blockquote p:last-child { margin-bottom:0; }
+  code { background:var(--code); padding:.15em .4em; border-radius:6px;
+          font-family:"SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.88em; }
+  pre { background:var(--soft); border:1px solid var(--border); border-radius:8px;
+         padding:14px 16px; overflow-x:auto; }
+  pre code { background:none; padding:0; font-size:.86em; }
+  table { border-collapse:collapse; width:100%; margin:1.3em 0; font-size:.94em; display:block; overflow-x:auto; }
+  th, td { border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top; }
+  thead th { background:var(--soft); }
+  tbody tr:nth-child(even) { background:var(--soft); }
+  mjx-container { overflow-x:auto; overflow-y:hidden; max-width:100%; }
+  .doc-footer { margin-top:4em; padding-top:1.2em; border-top:1px solid var(--border);
+                 color:var(--muted); font-size:.85em; }
+</style>
+</head>
+<body>
+<main>
+<h1 id="volatility-surfaces-explained-from-zero">Volatility Surfaces, Explained from Zero</h1>
+<h3 id="a-companion-to-week1-volatility_surfaceipynb">A companion to <code>Week1-Volatility_Surface.ipynb</code></h3>
+<p><strong>Who this is for.</strong> You work in finance but have never built a vol surface, calibrated SABR, or
+inverted Black–Scholes. By the end you should be able to (1) explain <em>what every cell does and why</em>,
+(2) reproduce the intuition on a whiteboard for a quant, and (3) know exactly what you'd change to run
+it on a real desk.</p>
+<p><strong>How to read it.</strong> Each section follows the same rhythm:</p>
+<ul>
+<li><strong>The intuition</strong> — the idea in plain English, before any symbols.</li>
+<li><strong>The math</strong> — the formula, then a line-by-line reading of what it <em>says</em>.</li>
+<li><strong>What the code does</strong> — how the notebook implements it.</li>
+<li><strong>🏦 In the real world</strong> — where this diverges from desk practice, cross-referenced to
+  <code>Week1-Volatility_Surface_Review.md</code>.</li>
+<li><strong>🎤 Explain it to a quant in one breath</strong> — the one or two sentences that prove you get it.</li>
+</ul>
+<blockquote>
+<p><strong>The single most important idea in this whole notebook.</strong> "Volatility" is not one number. There
+are <strong>three</strong> different things people call volatility and you must never mix them up:</p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Looks</th>
+<th>Measure</th>
+<th>Question it answers</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Realized</strong> vol</td>
+<td>backward</td>
+<td>physical (ℙ)</td>
+<td>What did the stock <em>actually</em> do?</td>
+</tr>
+<tr>
+<td><strong>Implied</strong> vol</td>
+<td>forward</td>
+<td>risk-neutral (ℚ)</td>
+<td>What do option <em>prices</em> imply about the future?</td>
+</tr>
+<tr>
+<td><strong>Model</strong> vol (GARCH/SABR/Heston)</td>
+<td>either</td>
+<td>depends</td>
+<td>Our attempt to <em>describe or forecast</em> the other two.</td>
+</tr>
+</tbody>
+</table>
+<p>"ℙ vs ℚ" (physical vs risk-neutral measure) just means: ℙ is the real world where you estimate from
+history; ℚ is the pricing world where everything is discounted at the risk-free rate and prices are
+expectations. Option prices live in ℚ. Your return history lives in ℙ. The gap between them is not a
+mistake — it's where the money is (Section 6).</p>
+</blockquote>
+<hr />
+<h2 id="the-30-second-picture-what-is-a-volatility-surface">The 30-second picture: what is a volatility surface?</h2>
+<p>Black–Scholes says every option on a stock should be priced off <strong>one</strong> volatility number. If that
+were true, you could back out that number from any option's market price and always get the same
+answer. You don't. The implied volatility you extract <strong>depends on the strike and the maturity</strong> of
+the option you looked at.</p>
+<p>Plot that dependence in 3D — implied vol on the vertical axis, <strong>strike (or moneyness)</strong> on one
+horizontal axis, <strong>time to maturity</strong> on the other — and you get a <strong>surface</strong>. It is wrinkled, not
+flat:</p>
+<ul>
+<li>The wrinkle <em>across strikes</em> is the <strong>smile / skew</strong>.</li>
+<li>The drift <em>across maturities</em> is the <strong>term structure</strong>.</li>
+</ul>
+<p>The entire notebook is: build this surface from real AAPL option prices, then show the models (SABR,
+Heston) that desks use to describe its shape and fill in the gaps between quoted strikes.</p>
+<hr />
+<h2 id="section-0-setup">Section 0 — Setup</h2>
+<p><strong>What the code does.</strong> Imports the scientific Python stack and pins a few conventions:</p>
+<ul>
+<li><code>TICKER = "AAPL"</code>, <code>TODAY = today's date</code>.</li>
+<li><code>N_DAYS_YEAR = 252</code> — the number of <strong>trading</strong> days in a year, used to <em>annualize</em> volatility.</li>
+<li><code>brentq</code> (a 1-D root finder), <code>least_squares</code> (for SABR calibration), <code>griddata</code> (to interpolate a
+  surface from scattered points), <code>plotly</code> (interactive 3D).</li>
+</ul>
+<p>Nothing conceptual here — but note the <strong>252</strong>. Volatility is measured per-day from trading-day
+returns, so to express it "per year" you scale by trading days, not calendar days. Hold that thought;
+it collides with a <em>different</em> convention later (see Section 6's real-world note).</p>
+<hr />
+<h2 id="section-1-the-risk-free-discount-curve">Section 1 — The risk-free discount curve</h2>
+<h3 id="the-intuition">The intuition</h3>
+<p>Money tomorrow is worth less than money today. An option pays off in the future, so its value today is
+the <strong>discounted</strong> value of its expected payoff. "Discounting" needs an interest rate. But there isn't
+<em>one</em> rate — a 3-month rate differs from a 30-year rate. That whole set of rates-by-maturity is the
+<strong>term structure</strong> (or <strong>yield curve</strong>). To price options at different expiries, you need the rate
+<em>appropriate to each expiry</em>.</p>
+<h3 id="the-math">The math</h3>
+<p>Every option price is a <strong>discounted risk-neutral expectation</strong>:</p>
+<div class="arithmatex">\[C = e^{-rT}\,\mathbb{E}^{\mathbb{Q}}\big[(S_T-K)^+\big].\]</div>
+<p>Read it as: <em>the price today = (a discount factor) × (the average payoff in the pricing world)</em>. The
+<span class="arithmatex">\((S_T-K)^+\)</span> is the call payoff (<code>max(stock − strike, 0)</code>). The <span class="arithmatex">\(e^{-rT}\)</span> drags that future average
+back to today.</p>
+<p>The notebook converts a quoted annual yield <span class="arithmatex">\(y\)</span> into a <strong>continuously compounded</strong> rate so that the
+discount factor is a clean exponential:</p>
+<div class="arithmatex">\[r_{cc} = \ln(1+y), \qquad P(0,T) = e^{-r_{cc}\,T}.\]</div>
+<p>Continuous compounding is just the mathematically convenient limit of compounding "infinitely often";
+it makes the algebra in Black–Scholes (which is full of exponentials) tidy.</p>
+<h3 id="what-the-code-does">What the code does</h3>
+<ul>
+<li><code>load_treasury_curve()</code> pulls US Treasury constant-maturity yields from <strong>FRED</strong> (e.g. <code>DGS3MO</code>,
+  <code>DGS10</code>) — these are the market's risk-free rates by tenor. If no FRED key is set, it falls back to
+  yfinance Treasury indices.</li>
+<li>It converts each percent yield to a continuously compounded decimal with <code>np.log1p</code> (= <code>ln(1+y)</code>).</li>
+<li><code>risk_free_rate(T)</code> <strong>linearly interpolates</strong> that curve to any maturity <code>T</code> you ask for.</li>
+<li><code>discount_factor(T)</code> returns <span class="arithmatex">\(e^{-r(T)T}\)</span>.</li>
+</ul>
+<p>So given any option maturity, you can now get "the right interest rate" and "the right discount
+factor." That's the foundation everything else stands on.</p>
+<h3 id="in-the-real-world">🏦 In the real world</h3>
+<p><em>(Review §3, bullets 1–2)</em>
+- <strong>Par yields are not zero rates.</strong> The notebook treats a quoted Treasury yield as if it were the
+  pure discount (zero) rate. A desk <strong>bootstraps</strong> true zero rates from instruments — and uses the
+  <strong>OIS/SOFR</strong> curve, not Treasuries, as the genuine risk-free discounting curve for derivatives.
+- <strong>Compounding convention.</strong> Treasury CMT yields are <strong>bond-equivalent (semi-annual)</strong>, so the
+  cleaner conversion is <span class="arithmatex">\(r_{cc} = 2\ln(1+y/2)\)</span>, not <span class="arithmatex">\(\ln(1+y)\)</span> (~4 bp difference at 4% — small, but
+  it's the kind of thing a quant will ask you about).
+- <strong>Interpolation space matters.</strong> Linear interpolation <em>in the zero rate</em> can produce kinked or even
+  negative <em>forward</em> rates. Desks interpolate in log-discount-factor or forward space for smoothness.</p>
+<h3 id="explain-it-to-a-quant-in-one-breath">🎤 Explain it to a quant in one breath</h3>
+<p>"An option price is a discounted ℚ-expectation, so I need a discount factor per maturity. I build a
+continuously-compounded zero curve and interpolate it; in production I'd bootstrap zeros off OIS/SOFR
+rather than treating par yields as zeros."</p>
+<hr />
+<h2 id="section-2-realized-historical-volatility">Section 2 — Realized (historical) volatility</h2>
+<h3 id="the-intuition_1">The intuition</h3>
+<p>The simplest meaning of "volatility": how much did the stock actually bounce around? You measure it
+from the <strong>dispersion of past returns</strong>. Crucially, when you plot it through time it is <em>not constant</em>
+— markets have calm stretches and stormy stretches. Vol <strong>clusters</strong>: a big move today makes a big
+move tomorrow more likely. That single empirical fact is the seed of everything that follows (GARCH,
+the smile, stochastic vol).</p>
+<h3 id="the-math_1">The math</h3>
+<p>Use <strong>log returns</strong> <span class="arithmatex">\(r_t = \ln(S_t / S_{t-1})\)</span>. Why logs and not simple percentage changes?
+- They're <strong>time-additive</strong> (a week's log return is the sum of the daily ones).
+- They're the natural language of <strong>geometric Brownian motion</strong>, the model under Black–Scholes, where
+  log returns are normally distributed.</p>
+<p>Realized volatility is the standard deviation of those returns, <strong>annualized</strong>:</p>
+<div class="arithmatex">\[\sigma_{\text{realized}} = \sqrt{N}\;\operatorname{std}(r_t), \qquad N = 252.\]</div>
+<p>Why the <span class="arithmatex">\(\sqrt{N}\)</span>? For independent returns, <strong>variance grows linearly with time</strong> (variance of a sum
+= sum of variances), so a daily variance <span class="arithmatex">\(\times 252\)</span> gives annual variance; take the square root to
+get back to volatility. Volatility scales with the <strong>square root of time</strong> — the famous "√t rule."</p>
+<h3 id="what-the-code-does_1">What the code does</h3>
+<ul>
+<li>Downloads 3 years of AAPL closes (<code>auto_adjust=True</code>, so prices are adjusted for splits/dividends —
+  correct for computing returns).</li>
+<li>Computes daily log returns.</li>
+<li>Computes <strong>rolling</strong> 21-day (~1 month) and 63-day (~3 month) realized vol, annualized, and plots
+  them. You can <em>see</em> the clustering: the lines are far from flat.</li>
+</ul>
+<h3 id="in-the-real-world_1">🏦 In the real world</h3>
+<p><em>(Review §3, "Close-to-close realized vol only")</em>
+- This is the <strong>close-to-close</strong> estimator — it only uses the closing price and throws away the day's
+  high/low. It's correct but <strong>noisy</strong>. Desks often use <strong>range-based estimators</strong> (Parkinson,
+  Garman–Klass, Yang–Zhang) that exploit the OHLC bar you already downloaded and are several times more
+  statistically efficient. Good lesson: <em>estimating</em> vol and <em>modeling</em> vol are different problems.</p>
+<h3 id="explain-it-to-a-quant-in-one-breath_1">🎤 Explain it to a quant in one breath</h3>
+<p>"Realized vol is the annualized standard deviation of log returns, scaled by √252 because variance is
+additive in time. The rolling estimate visibly clusters, which is why a single constant σ can't be
+right — and motivates GARCH."</p>
+<hr />
+<h2 id="section-3-garch11-modeling-and-forecasting-realized-vol">Section 3 — GARCH(1,1): modeling and forecasting realized vol</h2>
+<h3 id="the-intuition_2">The intuition</h3>
+<p>If volatility clusters, then today's variance carries information about tomorrow's. GARCH is the
+workhorse model that encodes exactly that: <strong>tomorrow's variance is a blend of (a) a long-run average,
+(b) yesterday's surprise, and (c) yesterday's variance.</strong> It naturally produces vol that spikes after
+a shock and then <em>decays back</em> toward a long-run level — i.e. <strong>mean reversion</strong>.</p>
+<h3 id="the-math_2">The math</h3>
+<div class="arithmatex">\[\sigma_t^2 = \underbrace{\omega}_{\text{baseline}} + \underbrace{\alpha\,\epsilon_{t-1}^2}_{\text{reaction to last shock}} + \underbrace{\beta\,\sigma_{t-1}^2}_{\text{persistence}}.\]</div>
+<ul>
+<li><span class="arithmatex">\(\alpha\)</span> — how strongly a fresh shock (<span class="arithmatex">\(\epsilon_{t-1}\)</span> = yesterday's return surprise) bumps vol up.</li>
+<li><span class="arithmatex">\(\beta\)</span> — how much of yesterday's variance carries over (memory/persistence).</li>
+<li><span class="arithmatex">\(\alpha + \beta\)</span> — <strong>total persistence</strong>. Close to 1 ⇒ shocks die out very slowly.</li>
+<li><strong>Long-run (unconditional) variance</strong> = <span class="arithmatex">\(\dfrac{\omega}{1 - \alpha - \beta}\)</span>. This is the level vol
+  reverts to. (It only exists if <span class="arithmatex">\(\alpha+\beta&lt;1\)</span>.)</li>
+</ul>
+<p>Because the model knows how vol decays, you can roll it forward to get a <strong>forecast term structure of
+volatility</strong>: expected average vol over the next 1 day, 1 month, 1 year… mean-reverting from today's
+level toward the long-run level.</p>
+<h3 id="what-the-code-does_2">What the code does</h3>
+<ul>
+<li>Fits <code>arch_model(..., vol="GARCH", p=1, q=1, dist="normal")</code> on returns <strong>in percent</strong> (the <code>arch</code>
+  library's convention, purely for numerical stability).</li>
+<li>Prints the fitted <span class="arithmatex">\(\omega, \alpha, \beta\)</span>, the persistence <span class="arithmatex">\(\alpha+\beta\)</span>, and the implied long-run
+  annualized vol.</li>
+<li>Plots the in-sample <strong>conditional volatility</strong> (the model's day-by-day vol) against realized vol.</li>
+<li>Forecasts variance out 252 days and converts it to a <strong>term-structure curve</strong>: term vol to horizon
+  <span class="arithmatex">\(h\)</span> = <span class="arithmatex">\(\sqrt{\frac{1}{h}\sum_{i=1}^h \text{(daily var}_i) \times 252}\)</span>. This <code>GARCH_TERM</code> curve is
+  reused in Section 6 to compare against implied vol.</li>
+</ul>
+<h3 id="in-the-real-world_2">🏦 In the real world</h3>
+<p><em>(Review §3, "GARCH(1,1) with Gaussian innovations and no leverage term"; §3, "P vs Q")</em>
+- <strong>Gaussian innovations underestimate tail risk.</strong> Equity returns are fat-tailed; switch to
+  <strong>Student-t</strong> (<code>dist="t"</code>).
+- <strong>Plain GARCH is symmetric — it can't see the leverage effect.</strong> Empirically, equity vol jumps more
+  on <em>down</em> days than up days. That asymmetry is the <strong>time-series cousin of the very skew</strong> you'll see
+  in the option surface. <strong>GJR-GARCH</strong> or <strong>EGARCH</strong> capture it and are essentially one-line changes.
+  This is a beautiful point to raise with a quant: realized-vol asymmetry (ℙ) and implied-vol skew (ℚ)
+  are two windows onto the same economic fact.
+- <strong>GARCH lives in ℙ, implied vol lives in ℚ.</strong> When you compare them in Section 6, remember the GARCH
+  forecast is a <em>physical point forecast</em>, not a risk-neutral expectation.</p>
+<h3 id="explain-it-to-a-quant-in-one-breath_2">🎤 Explain it to a quant in one breath</h3>
+<p>"GARCH(1,1) makes conditional variance mean-revert: ω sets the floor, α is the shock reaction, β the
+persistence, and ω/(1−α−β) is the long-run variance. I'd use GJR-t in practice so the model captures
+the leverage effect and fat tails — the ℙ-measure shadow of the equity skew."</p>
+<hr />
+<h2 id="section-4-blackscholes-and-the-implied-volatility-inversion">Section 4 — Black–Scholes and the implied-volatility <em>inversion</em></h2>
+<h3 id="the-intuition_3">The intuition</h3>
+<p>Black–Scholes is a formula that turns <strong>(spot, strike, maturity, rate, dividend, volatility)</strong> into a
+fair option price. Everything on the input side is observable <strong>except volatility</strong> — it's the one
+unknown that captures "how uncertain is the future." </p>
+<p>Now flip it: the market <em>quotes a price</em>. So you can ask, "what single volatility, plugged into BS,
+reproduces this exact market price?" That number is the <strong>implied volatility (IV)</strong>. It exists and is
+unique because the BS price is <strong>strictly increasing in volatility</strong> (higher vol ⇒ more valuable
+option, always). IV is the market's <em>common language</em>: instead of quoting messy dollar prices across
+strikes, everyone quotes "vol," which normalizes things.</p>
+<h3 id="the-math_3">The math</h3>
+<p>With continuous dividend yield <span class="arithmatex">\(q\)</span>:</p>
+<div class="arithmatex">\[d_1=\frac{\ln(S/K)+(r-q+\tfrac12\sigma^2)T}{\sigma\sqrt T},\qquad d_2=d_1-\sigma\sqrt T,\]</div>
+<div class="arithmatex">\[C = S e^{-qT}N(d_1) - K e^{-rT}N(d_2), \qquad P = K e^{-rT}N(-d_2) - S e^{-qT}N(-d_1).\]</div>
+<p>How to <em>read</em> this without memorizing it:
+- <span class="arithmatex">\(N(\cdot)\)</span> is the normal CDF (a probability between 0 and 1).
+- <span class="arithmatex">\(N(d_2)\)</span> ≈ the <strong>risk-neutral probability the option finishes in-the-money</strong>. So <span class="arithmatex">\(Ke^{-rT}N(d_2)\)</span> is
+  "what you expect to pay for the stock (the strike), times the chance you'll pay it, discounted."
+- <span class="arithmatex">\(S e^{-qT} N(d_1)\)</span> is the <strong>present value of receiving the stock</strong>, conditional on exercise.
+- The call value is therefore <em>(value of the stock you'd get) − (value of the cash you'd pay)</em>.</p>
+<p><strong>Vega</strong> — the sensitivity of price to volatility — is the engine of the inversion:</p>
+<div class="arithmatex">\[\text{Vega} = \frac{\partial C}{\partial \sigma} = S e^{-qT}\,\phi(d_1)\,\sqrt T \; &gt; 0.\]</div>
+<p>Vega &gt; 0 everywhere is <em>why</em> the inverse (IV) is unique.</p>
+<h3 id="what-the-code-does_3">What the code does</h3>
+<ul>
+<li><code>bs_price(...)</code> — vectorized Black–Scholes for calls and puts.</li>
+<li><code>bs_vega(...)</code> — the vega formula.</li>
+<li><code>implied_vol(price, ...)</code> — inverts BS for σ using <strong>Brent's method</strong> (<code>brentq</code>), a robust 1-D
+  root-finder, searching σ in <code>[1e-4, 5]</code>. It first checks the quoted price isn't below intrinsic
+  value (which would be arbitrage / bad data) and returns <code>NaN</code> if so.</li>
+<li>A <strong>sanity check</strong>: price a call at σ = 25%, then invert the price → recovers 0.2500. This round-trip
+  proves the two functions are mutually consistent.</li>
+</ul>
+<h3 id="in-the-real-world_3">🏦 In the real world</h3>
+<p><em>(Review §5, "<code>bs_vega</code> is defined but never used"; §5, "Short-maturity guard")</em>
+- <strong>Vega is computed but never used.</strong> The cleaner production inversion is <strong>Newton's method using
+  vega</strong> (fast quadratic convergence), with Brent as a fallback when Newton misbehaves in the wings.
+  As written, vega is dead code that hints at a faster path the notebook doesn't take.
+- <strong>Very short maturities are numerically dangerous</strong> — <span class="arithmatex">\(d_1\)</span> has <span class="arithmatex">\(\sigma\sqrt T\)</span> in the denominator,
+  which → 0 as <span class="arithmatex">\(T\)</span> → 0. The notebook sidesteps this by skipping the nearest expiry; a robust tool adds
+  an explicit small-<span class="arithmatex">\(T\)</span> guard.</p>
+<h3 id="explain-it-to-a-quant-in-one-breath_3">🎤 Explain it to a quant in one breath</h3>
+<p>"BS is monotonically increasing in σ (vega &gt; 0), so implied vol is the unique root of BS(σ) − market price = 0.
+I solve it with Brent; I'd Newton-on-vega with a Brent fallback for speed and stability."</p>
+<hr />
+<h2 id="section-5-the-market-implied-vol-surface-from-the-live-chain">Section 5 — The market implied-vol surface from the live chain</h2>
+<h3 id="the-intuition_4">The intuition</h3>
+<p>This is where it becomes real. You pull <strong>every quoted AAPL option</strong> across several expiries, clean
+the quotes, invert each one to an implied vol, and assemble the cloud of points into a surface. The
+craft here is the <strong>data hygiene</strong> — bad quotes produce a garbage surface, so most of the work is
+filtering.</p>
+<p>Two conventions make the cloud comparable across maturities:
+1. <strong>Moneyness</strong> — instead of raw strike, use <span class="arithmatex">\(K/S\)</span> (how far the strike is from spot, in %). A
+   90%-moneyness option means roughly the same thing on a $50 stock and a $300 stock.
+2. <strong>The forward</strong>, <span class="arithmatex">\(F = S e^{(r-q)T}\)</span> — the market's expected price of the stock at expiry under ℚ.
+   It's the natural center of the smile (more so than spot), because that's the no-arbitrage
+   delivery price.</p>
+<h3 id="why-use-only-otm-options">Why use only OTM options?</h3>
+<p>Out-of-the-money options (cheap, all time-value, no intrinsic value) are the <strong>most liquid and least
+noisy</strong>. And by <strong>put–call parity</strong>, a call and a put at the same strike and expiry must imply the
+<em>same</em> volatility — so you don't need both. The convention:
+- For strikes <strong>below</strong> the forward → use <strong>OTM puts</strong> (downside protection).
+- For strikes <strong>at or above</strong> the forward → use <strong>OTM calls</strong> (upside).
+This stitches together one clean smile from the liquid half of each side.</p>
+<h3 id="what-the-code-does_4">What the code does</h3>
+<ol>
+<li>Estimates AAPL's <strong>dividend yield</strong> <span class="arithmatex">\(q\)</span> (with a heuristic to fix yfinance's inconsistent units).</li>
+<li>Picks ~8 expiries spread across the term, skipping the nearest week (microstructure noise).</li>
+<li><code>build_iv_surface()</code>:
+   - For each expiry: computes <span class="arithmatex">\(T\)</span>, the rate <span class="arithmatex">\(r\)</span>, and the forward <span class="arithmatex">\(F\)</span>.
+   - Takes <strong>mid price</strong> = ½(bid + ask); drops zero-bid, crossed (ask &lt; bid), and sub-5-cent quotes.
+   - Keeps <strong>OTM</strong> only (the parity logic above).
+   - Inverts each surviving quote to an IV, keeping only sensible values (1%–300%).</li>
+<li>Restricts to a trustworthy moneyness band (70%–130%).</li>
+<li>Plots single-expiry <strong>smile slices</strong> (you can see the <strong>skew</strong>: OTM puts trade at higher IV than
+   OTM calls — crash insurance is expensive), then the <strong>3D IV surface</strong> side-by-side with the
+   <strong>call-price surface</strong> rebuilt from the same IVs (to show the IV surface is just the price surface
+   re-expressed in "vol language").</li>
+</ol>
+<h3 id="in-the-real-world_4">🏦 In the real world</h3>
+<p><em>(Review §2.2, §4 all bullets)</em>
+- <strong>yfinance is retail-grade and asynchronous.</strong> Spot is "now" but option mids can be stale, and
+  bid/asks can be one-sided. Every stale quote injects noise into IV. Filter on <strong>volume / open
+  interest</strong> (not just price &gt; 5¢) and drop stale <code>lastTradeDate</code>s.
+- <strong>Get the forward from put–call parity, not an assumed dividend yield.</strong> The fragile
+  <code>if q_div &gt; 0.05: q_div /= 100</code> patch will silently misprice the forward the day yfinance changes
+  units. The forward (and the implied dividend) fall straight out of the call−put price difference at
+  each strike — use that.
+- <strong>No no-arbitrage enforcement.</strong> The surface is interpolated with <code>griddata(method="linear")</code>, which
+  (a) can leave <strong>NaN holes outside the convex hull</strong> of quotes and (b) does nothing to prevent
+  <strong>butterfly</strong> (negative implied density) or <strong>calendar</strong> (total variance decreasing in T) arbitrage.
+  A real surface must be arbitrage-free; at minimum add diagnostics (see Section 8 note).
+- <strong>Reproducibility.</strong> Live data means the surface changes every run and can't be unit-tested.
+  <strong>Snapshot</strong> the chain + spot + curve to a timestamped file and build from the snapshot.</p>
+<h3 id="explain-it-to-a-quant-in-one-breath_4">🎤 Explain it to a quant in one breath</h3>
+<p>"I invert OTM mids — puts below the forward, calls above — because they're liquid and parity makes the
+two sides share one vol. I express strikes as moneyness so maturities are comparable. In production I'd
+take the forward from parity, weight by liquidity, and enforce static no-arbitrage rather than raw
+linear interpolation."</p>
+<hr />
+<h2 id="section-6-realized-vs-implied-the-variance-risk-premium">Section 6 — Realized vs implied: the variance risk premium</h2>
+<h3 id="the-intuition_5">The intuition</h3>
+<p>Lay the <strong>ATM implied-vol term structure</strong> (from the option market, ℚ) on top of the <strong>GARCH
+realized-vol forecast</strong> (from history, ℙ). Almost always, <strong>implied sits above realized</strong>. Why? Option
+<em>buyers</em> are paying for insurance against future moves, and <em>sellers</em> demand compensation for bearing
+that risk. That persistent gap is the <strong>variance risk premium (VRP)</strong> — the reward harvested by vol
+sellers. It is <em>not</em> a forecasting error; it's a risk premium, the same way equities return more than
+bonds.</p>
+<h3 id="what-the-code-does_5">What the code does</h3>
+<ul>
+<li>Extracts ATM implied vol per expiry (the quote nearest moneyness 1.0).</li>
+<li>Overlays it on <code>GARCH_TERM</code> (from Section 3) and the trailing realized vol.</li>
+<li>Prints mean ATM implied vs trailing realized — implied is typically higher.</li>
+</ul>
+<h3 id="in-the-real-world_5">🏦 In the real world</h3>
+<p><em>(Review §2.3 and §3, "ATM by nearest-strike", "P vs Q")</em>
+- <strong>Unit mismatch (a real, subtle bug).</strong> Implied <span class="arithmatex">\(T\)</span> uses <strong>/365</strong> (calendar) while the GARCH horizon
+  uses <strong>/252</strong> (trading). On the same "years" axis the two curves are ~4% misaligned in time. Pick one
+  clock. This is exactly the unit-mixing that causes P&amp;L attribution errors on a desk.
+- <strong>ATM should be interpolated to exactly <span class="arithmatex">\(K=F\)</span></strong>, not snapped to the nearest listed strike, or the
+  term structure jitters with the strike grid.
+- <strong>ℙ vs ℚ caveat.</strong> The "gap" mixes the true premium with GARCH forecast error, because GARCH is a
+  physical point forecast, not 𝔼^ℚ. Directionally right; don't oversell it as a clean premium.</p>
+<h3 id="explain-it-to-a-quant-in-one-breath_5">🎤 Explain it to a quant in one breath</h3>
+<p>"Implied minus realized is the variance risk premium — sellers get paid for warehousing vol risk. The
+clean way to confirm it is to short delta-hedged straddles or variance swaps and measure the harvested
+premium, mindful that I'm comparing a ℚ price to a ℙ forecast."</p>
+<hr />
+<h2 id="section-7-implied-vs-the-flat-blackscholes-surface">Section 7 — Implied vs the flat Black–Scholes surface</h2>
+<h3 id="the-intuition_6">The intuition</h3>
+<p>This section exists to make the failure of plain Black–Scholes <em>visual</em>. BS assumes <strong>one constant σ</strong>,
+which is a perfectly <strong>flat plane</strong>. The notebook draws that flat plane (at the average ATM level)
+underneath the real, wrinkled market surface. The market's <strong>skew</strong> (tilt across moneyness) and
+<strong>term structure</strong> (drift across maturity) are precisely the features the flat plane cannot represent.
+That visible gap is the entire reason the industry moved beyond constant-vol BS to the smile models in
+Sections 8–9.</p>
+<h3 id="what-the-code-does_6">What the code does</h3>
+<p>Builds a constant surface <code>FLAT</code> at the mean ATM vol and overlays it (semi-transparent grey) under the
+colored market surface in 3D.</p>
+<h3 id="explain-it-to-a-quant-in-one-breath_6">🎤 Explain it to a quant in one breath</h3>
+<p>"BS is a flat plane; the market is skewed and term-dependent. The whole field of local- and
+stochastic-vol modeling exists to fill the gap between that plane and reality."</p>
+<hr />
+<h2 id="section-8-sabr-the-desk-standard-for-smile-interpolation">Section 8 — SABR: the desk standard for smile interpolation</h2>
+<h3 id="the-intuition_7">The intuition</h3>
+<p>You have option quotes at a handful of strikes, but you need vols at <strong>every</strong> strike (to price a
+client's exact option, or to interpolate smoothly). SABR is a small, four-parameter model whose
+parameters each control one recognizable feature of a single-maturity smile:</p>
+<ul>
+<li><strong>α (alpha)</strong> — the overall <strong>level</strong> (how high the smile sits ≈ ATM vol).</li>
+<li><strong>β (beta)</strong> — the <strong>backbone</strong> (how ATM vol moves as spot moves); usually <em>fixed</em> by convention
+  because it's nearly redundant with ρ.</li>
+<li><strong>ρ (rho)</strong> — spot/vol <strong>correlation</strong> ⇒ the <strong>skew/tilt</strong>. For equities ρ is <strong>negative</strong> (down
+  moves raise vol).</li>
+<li><strong>ν (nu)</strong> — <strong>vol-of-vol</strong> ⇒ the <strong>curvature/smile</strong> (how much the wings lift).</li>
+</ul>
+<h3 id="the-math_4">The math</h3>
+<p>SABR models the forward and its own volatility as two correlated random processes:</p>
+<div class="arithmatex">\[dF = \alpha F^\beta\,dW_1,\qquad d\alpha = \nu\,\alpha\,dW_2,\qquad dW_1\,dW_2=\rho\,dt.\]</div>
+<p>Its fame comes from <strong>Hagan's (2002) closed-form approximation</strong> <span class="arithmatex">\(\sigma_{\text{SABR}}(K,F)\)</span>: instead
+of simulating those SDEs, you get implied vol from an explicit formula. That makes calibrating a smile
+a <strong>fast 3-parameter least-squares fit</strong> (α, ρ, ν, with β fixed) — fit the formula to the observed
+vols by minimizing squared error.</p>
+<h3 id="what-the-code-does_7">What the code does</h3>
+<ul>
+<li><code>sabr_iv(...)</code> — Hagan's lognormal IV approximation (with a separate ATM-limit branch where <span class="arithmatex">\(F=K\)</span>).</li>
+<li><code>calibrate_sabr_slice(...)</code> — for one expiry, least-squares fit (α, ρ, ν) with β = 0.5 fixed and
+  parameter bounds.</li>
+<li>Loops over every expiry slice, prints the fitted parameter table, overlays SABR fits on market
+  smiles, and assembles the slices into a full SABR surface.</li>
+</ul>
+<h3 id="in-the-real-world-this-section-has-the-notebooks-worst-real-problem">🏦 In the real world — this section has the notebook's worst real problem</h3>
+<p><em>(Review §2.1 — the headline finding)</em></p>
+<p>Look at the fitted parameters the notebook actually produced:</p>
+<table>
+<thead>
+<tr>
+<th>T (years)</th>
+<th>ρ</th>
+<th>ν</th>
+<th>Verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>short tenors</td>
+<td>≈ −0.13 to −0.19</td>
+<td>large</td>
+<td>✅ sensible (negative skew, curved)</td>
+</tr>
+<tr>
+<td>1.51</td>
+<td><strong>+0.030</strong></td>
+<td>0.34</td>
+<td>⚠️ skew sign flipped positive</td>
+</tr>
+<tr>
+<td>2.50</td>
+<td><strong>+0.999</strong></td>
+<td>0.037</td>
+<td>❌ degenerate — ρ pinned on its boundary</td>
+</tr>
+</tbody>
+</table>
+<p>For an equity, ρ should be <strong>firmly negative</strong> at every maturity. A ρ glued to <strong>+0.999</strong> with ν
+collapsing toward zero is the textbook signature of a <strong>failed least-squares fit</strong>: the long-dated
+slices have few, wide, illiquid quotes, the fit is <strong>unweighted</strong>, and the optimizer walked off to the
+constraint chasing noise. <strong>The long end of this surface is not trustworthy.</strong> Fixes:
+- <strong>Weight residuals by vega and/or liquidity</strong> so noisy far-wing quotes stop dominating.
+- Add a <strong>fit-quality gate</strong>: reject/flag a slice if RMSE is high, a parameter hits a bound, or ρ
+  flips sign versus neighbors. Print per-slice RMSE so degeneracy is <em>visible</em> instead of silent.
+- Penalize for <strong>smoothness in maturity</strong> (ρ, ν should evolve gently across T).
+- Remember Hagan's formula itself can imply <strong>negative densities at low strikes for long T</strong> — so
+  check no-arbitrage on the fitted slices.</p>
+<h3 id="explain-it-to-a-quant-in-one-breath_7">🎤 Explain it to a quant in one breath</h3>
+<p>"SABR gives a smile from four economically meaningful parameters via Hagan's closed form — α sets the
+level, ρ the skew, ν the curvature, β the backbone (fixed). I calibrate per slice by least squares, but
+I'd weight by vega/liquidity and gate on fit quality, because unweighted fits on the illiquid long end
+blow up — here ρ pinned to +0.999, which is nonsense for equities."</p>
+<hr />
+<h2 id="section-9-heston-stochastic-volatility-from-the-ground-up">Section 9 — Heston: stochastic volatility from the ground up</h2>
+<h3 id="the-intuition_8">The intuition</h3>
+<p>SABR describes one smile at a time. <strong>Heston</strong> is more ambitious: it makes <strong>variance itself a random,
+mean-reverting process</strong>, and from that single dynamic it generates an <em>entire</em> surface — skew,
+curvature, and the way skew flattens with maturity — out of a handful of parameters. It's the
+workhorse for pricing <strong>exotics</strong> consistently with the vanilla surface.</p>
+<h3 id="the-math_5">The math</h3>
+<div class="arithmatex">\[dS_t = (r-q)S_t\,dt + \sqrt{v_t}\,S_t\,dW_t^S, \qquad
+   dv_t = \kappa(\theta-v_t)\,dt + \xi\sqrt{v_t}\,dW_t^v, \qquad dW^S dW^v=\rho\,dt.\]</div>
+<p>The first line is the stock (like Black–Scholes, but with random variance <span class="arithmatex">\(v_t\)</span>). The second line is
+the variance, which <strong>mean-reverts</strong> to a long-run level:
+- <span class="arithmatex">\(v_0\)</span> — variance right now.
+- <span class="arithmatex">\(\theta\)</span> — the long-run variance it reverts toward.
+- <span class="arithmatex">\(\kappa\)</span> — the <strong>speed</strong> of reversion (big κ = snaps back fast).
+- <span class="arithmatex">\(\xi\)</span> (xi) — <strong>vol-of-vol</strong> ⇒ controls <strong>smile curvature</strong>.
+- <span class="arithmatex">\(\rho\)</span> — correlation between stock and its variance ⇒ controls <strong>skew</strong> (equities: ρ &lt; 0).
+- <strong>Feller condition</strong> <span class="arithmatex">\(2\kappa\theta &gt; \xi^2\)</span> keeps variance from hitting zero.</p>
+<p><strong>How it's priced.</strong> There's no simple closed form like BS, but there's a <strong>semi-closed form</strong> via the
+<strong>characteristic function</strong> (the Fourier transform of the log-price distribution). The trick (Gil–Pelaez
+inversion): you can recover the in-the-money probabilities <span class="arithmatex">\(P_1, P_2\)</span> by integrating the characteristic
+function, then</p>
+<div class="arithmatex">\[C = S e^{-qT} P_1 - K e^{-rT} P_2\]</div>
+<p>— structurally identical to Black–Scholes, just with <span class="arithmatex">\(P_1, P_2\)</span> computed by integration instead of
+<span class="arithmatex">\(N(d_1), N(d_2)\)</span>. No Monte Carlo needed, which is why Heston is fast enough to calibrate to a whole
+surface.</p>
+<h3 id="what-the-code-does_8">What the code does</h3>
+<ul>
+<li><code>heston_cf(...)</code> — the characteristic function in the <strong>"little trap"</strong> form (Albrecher et al.).</li>
+<li><code>heston_call(...)</code> — prices a European call by numerically integrating (trapezoid) to get <span class="arithmatex">\(P_1, P_2\)</span>.</li>
+<li>Uses <strong>illustrative</strong> (not calibrated) equity-style parameters, checks the <strong>Feller condition</strong>
+  prints true, prices a sanity ATM call, then builds a Heston IV surface by pricing on a grid and
+  inverting each price back to BS implied vol.</li>
+<li>The final markdown reads the surface: even with constant parameters, ρ &lt; 0 creates the downside
+  skew, ξ creates curvature, and the skew flattens with maturity — qualitatively matching the real
+  AAPL surface from Section 5.</li>
+</ul>
+<h3 id="in-the-real-world_6">🏦 In the real world</h3>
+<p><em>(Review §1 "Heston via the little trap…" — a genuine positive; §3, last bullet; §7 roadmap)</em>
+- <strong>The "little trap" form is the <em>right</em> choice — credit where due.</strong> The naïve original-1993 Heston
+  formula has a <strong>branch-cut/discontinuity bug</strong> in the complex logarithm that makes integration
+  unstable; the little-trap form fixes it. Most homegrown implementations get this wrong, so flag it as
+  a deliberate good decision, not an accident.
+- <strong>Parameters here are illustrative, not calibrated.</strong> In production you <strong>calibrate</strong>
+  <span class="arithmatex">\((\kappa,\theta,\xi,\rho,v_0)\)</span> to the <em>entire</em> chain at once by minimizing
+  <span class="arithmatex">\(\sum(\sigma^{\text{model}}_i - \sigma^{\text{mkt}}_i)^2\)</span> — note the contrast with SABR's <em>per-slice</em>
+  fit; Heston fits the whole surface jointly.
+- <strong>Integration is fixed-truncation trapezoid</strong> (<span class="arithmatex">\(u \in [10^{-6}, 200]\)</span>, N=4096). Fine for a demo, but
+  accuracy degrades for very short T / deep wings. <strong>Carr–Madan FFT</strong> or adaptive quadrature is the
+  production route.</p>
+<h3 id="explain-it-to-a-quant-in-one-breath_8">🎤 Explain it to a quant in one breath</h3>
+<p>"Heston makes variance a mean-reverting CIR process correlated with spot; ρ&lt;0 gives the skew, ξ the
+curvature, and the Feller condition keeps variance positive. I price via the characteristic function
+and Gil–Pelaez inversion — using the little-trap form to dodge the branch-cut instability — then I'd
+calibrate the five parameters jointly to the whole chain."</p>
+<hr />
+<h2 id="section-10-theory-practice-the-takeaway-map">Section 10 — Theory → practice (the takeaway map)</h2>
+<p>The notebook closes with a table mapping each concept from "the theory you knew" to "what it looks like
+in practice," plus a Week-2+ wishlist. Here is the consolidated version of that map, fused with the
+review so you can see, at a glance, <strong>the gap between the learning version and the desk version</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Concept</th>
+<th>What the notebook does</th>
+<th>What a desk does (the gap)</th>
+<th>Review ref</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Discounting</strong></td>
+<td>Treasury par yields as CC zeros, linear interp</td>
+<td>Bootstrap zeros off <strong>OIS/SOFR</strong>; semi-annual→CC; interp in DF/forward space</td>
+<td>§3</td>
+</tr>
+<tr>
+<td><strong>Realized vol</strong></td>
+<td>Close-to-close std × √252</td>
+<td>Add <strong>range estimators</strong> (Parkinson/GK/YZ) for efficiency</td>
+<td>§3</td>
+</tr>
+<tr>
+<td><strong>GARCH</strong></td>
+<td>GARCH(1,1), Gaussian, symmetric</td>
+<td><strong>GJR/EGARCH + Student-t</strong> for leverage &amp; fat tails</td>
+<td>§3</td>
+</tr>
+<tr>
+<td><strong>Implied vol</strong></td>
+<td>Brent inversion of OTM mids</td>
+<td><strong>Newton-on-vega</strong>; small-T guard</td>
+<td>§5</td>
+</tr>
+<tr>
+<td><strong>The forward</strong></td>
+<td>Assumed dividend yield (fragile patch)</td>
+<td><strong>Put–call parity</strong> forward; drop the yield field</td>
+<td>§4</td>
+</tr>
+<tr>
+<td><strong>Market surface</strong></td>
+<td>yfinance mids, <code>griddata</code> linear</td>
+<td>Liquidity/staleness filters; <strong>enforce no-arbitrage</strong>; snapshot data</td>
+<td>§2.2, §4</td>
+</tr>
+<tr>
+<td><strong>Implied vs realized</strong></td>
+<td>ATM-nearest, mixed 252/365 axes</td>
+<td>Interp to <strong>K=F</strong>; one time convention; ℙ-vs-ℚ caveat</td>
+<td>§2.3, §3</td>
+</tr>
+<tr>
+<td><strong>SABR</strong></td>
+<td>Per-slice unweighted least squares</td>
+<td><strong>Vega/liquidity weighting + fit gate</strong>; long-end degenerates today</td>
+<td><strong>§2.1</strong></td>
+</tr>
+<tr>
+<td><strong>Heston</strong></td>
+<td>Little-trap CF, illustrative params, trapezoid</td>
+<td>Calibrate to whole chain; <strong>FFT/adaptive</strong> integration</td>
+<td>§3</td>
+</tr>
+</tbody>
+</table>
+<h3 id="the-two-changes-that-matter-most-if-you-only-do-two">The two changes that matter most (if you only do two)</h3>
+<ol>
+<li><strong>Make the surface trustworthy on the long end</strong> — weight the SABR calibration by vega/liquidity and
+   gate on fit quality. Right now ρ = +0.999 at 2.5y is silently broken.</li>
+<li><strong>Make it reproducible and parity-based</strong> — snapshot the data, derive the forward from put–call
+   parity, and add no-arbitrage diagnostics.</li>
+</ol>
+<p>Everything else (GJR-GARCH, range estimators, Newton inversion, FFT pricing) is refinement on top of
+those two.</p>
+<hr />
+<h2 id="mini-glossary-for-quick-recall">Mini-glossary (for quick recall)</h2>
+<ul>
+<li><strong>Risk-neutral measure (ℚ)</strong> — the pricing world where assets grow at the risk-free rate and prices
+  are discounted expectations. Implied vol lives here.</li>
+<li><strong>Physical measure (ℙ)</strong> — the real world you estimate from history. Realized vol and GARCH live here.</li>
+<li><strong>Forward <span class="arithmatex">\(F\)</span></strong> — the no-arbitrage expected future price, <span class="arithmatex">\(S e^{(r-q)T}\)</span>; the natural center of a smile.</li>
+<li><strong>Moneyness</strong> — strike relative to spot (or forward), <span class="arithmatex">\(K/S\)</span>; makes strikes comparable across names/maturities.</li>
+<li><strong>Smile / skew</strong> — implied vol's dependence on strike; equities <strong>smirk</strong> (OTM puts richer than calls).</li>
+<li><strong>Term structure</strong> — implied (or forecast) vol's dependence on maturity.</li>
+<li><strong>Variance risk premium</strong> — implied vol persistently above realized; the reward for selling vol.</li>
+<li><strong>Vega</strong> — sensitivity of option price to volatility; positive everywhere, which makes IV unique.</li>
+<li><strong>Feller condition</strong> — <span class="arithmatex">\(2\kappa\theta &gt; \xi^2\)</span>; keeps Heston variance strictly positive.</li>
+<li><strong>No-arbitrage (static)</strong> — butterfly (convexity in strike ⇒ non-negative density) and calendar
+  (total variance non-decreasing in maturity); a tradeable surface must satisfy both.</li>
+<li><strong>Characteristic function</strong> — Fourier transform of the log-price density; lets you price via
+  integration when no closed form exists (Heston).</li>
+</ul>
+<div class="doc-footer">Rendered from <code>Week1-Volatility_Surface_Explained.md</code> · math by MathJax</div>
+</main>
+</body>
+</html>

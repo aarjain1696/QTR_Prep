@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Code Review — Week1-VolatilitySurface.ipynb</title>
+<script>
+MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+  options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'] }
+};
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+<style>
+  :root { --fg:#1b1f24; --muted:#57606a; --bg:#ffffff; --soft:#f6f8fa;
+           --border:#d0d7de; --accent:#0969da; --code:#eaeef2; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg:#e6edf3; --muted:#9198a1; --bg:#0d1117; --soft:#161b22;
+             --border:#30363d; --accent:#4493f8; --code:#1f2630; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+          font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+          line-height:1.65; font-size:17px; }
+  main { max-width:880px; margin:0 auto; padding:48px 24px 120px; }
+  h1,h2,h3,h4 { line-height:1.25; margin-top:1.8em; margin-bottom:.6em; }
+  h1 { font-size:2.1em; margin-top:.2em; }
+  h2 { font-size:1.5em; padding-bottom:.3em; border-bottom:1px solid var(--border); }
+  h3 { font-size:1.2em; }
+  p, li { color:var(--fg); }
+  a { color:var(--accent); text-decoration:none; }
+  a:hover { text-decoration:underline; }
+  hr { border:none; border-top:1px solid var(--border); margin:2.4em 0; }
+  blockquote { margin:1.2em 0; padding:.4em 1.1em; color:var(--muted);
+                border-left:4px solid var(--accent); background:var(--soft); border-radius:6px; }
+  blockquote p:first-child { margin-top:0; } blockquote p:last-child { margin-bottom:0; }
+  code { background:var(--code); padding:.15em .4em; border-radius:6px;
+          font-family:"SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.88em; }
+  pre { background:var(--soft); border:1px solid var(--border); border-radius:8px;
+         padding:14px 16px; overflow-x:auto; }
+  pre code { background:none; padding:0; font-size:.86em; }
+  table { border-collapse:collapse; width:100%; margin:1.3em 0; font-size:.94em; display:block; overflow-x:auto; }
+  th, td { border:1px solid var(--border); padding:8px 12px; text-align:left; vertical-align:top; }
+  thead th { background:var(--soft); }
+  tbody tr:nth-child(even) { background:var(--soft); }
+  mjx-container { overflow-x:auto; overflow-y:hidden; max-width:100%; }
+  .doc-footer { margin-top:4em; padding-top:1.2em; border-top:1px solid var(--border);
+                 color:var(--muted); font-size:.85em; }
+</style>
+</head>
+<body>
+<main>
+<h1 id="code-review-week1-volatility_surfaceipynb">Code Review — <code>Week1-Volatility_Surface.ipynb</code></h1>
+<p><em>Reviewer's lens: a quant on a derivatives / vol-trading desk reading this as if it were a junior's
+first cut of a surface-building tool. Graded on correctness, methodology, data hygiene, and "would
+this survive contact with a trading book."</em></p>
+<p><strong>Verdict:</strong> Excellent as a <em>learning artifact</em> — the pedagogy, narrative, and breadth (curve →
+realized → GARCH → IV → SABR → Heston) are genuinely strong and mostly methodologically sound. It is
+<strong>not</strong> desk-grade as a tool, and shouldn't pretend to be: it relies on retail data (yfinance),
+skips no-arbitrage enforcement, and the SABR calibration is silently producing degenerate fits on the
+long-dated slices. Below: what's good, what's wrong, and what I'd change, ordered by how much it
+matters.</p>
+<hr />
+<h2 id="1-whats-done-well-keep-this">1. What's done well (keep this)</h2>
+<ul>
+<li><strong>Conceptual spine is correct.</strong> The three-way split of <em>realized</em> (P-measure, backward),
+  <em>implied</em> (Q-measure, forward), <em>model</em> vol is stated up front and respected throughout. Most
+  people conflate these for years.</li>
+<li><strong>Forward-based, dividend-aware IV inversion.</strong> Using <code>F = S·e^(r−q)T</code>, selecting <strong>OTM</strong> options
+  (puts below F, calls above F), and inverting on mids is exactly the right hygiene. Many homegrown
+  tools wrongly invert ITM options or ignore dividends.</li>
+<li><strong>Heston via the "little trap" characteristic function</strong> (Albrecher et al.) is the <em>correct</em> stable
+  parameterization — it avoids the branch-cut/discontinuity bug that plagues naïve implementations of
+  the original 1993 Heston formula. Good instinct.</li>
+<li><strong>Sanity checks are present and meaningful</strong>: the BS→IV round-trip (recovers 0.25) and the explicit
+  Feller-condition print. This is the right reflex.</li>
+<li><strong>Honest footnotes.</strong> The notebook repeatedly flags its own simplifications (par-yield-as-zero,
+  assumed dividend yield vs put–call parity, illustrative Heston params). Intellectual honesty that a
+  reviewer respects.</li>
+<li><strong>Interactive 3D (plotly).</strong> Correct tool choice — the <em>shape</em> of the surface is the entire point,
+  and a static plot hides it.</li>
+</ul>
+<hr />
+<h2 id="2-bugs-red-flags-fix-before-trusting-any-number">2. Bugs / red flags (fix before trusting any number)</h2>
+<h3 id="21-sabr-calibration-is-silently-degenerating-on-long-dated-slices-most-important-issue">2.1 SABR calibration is silently degenerating on long-dated slices — <strong>most important issue</strong></h3>
+<p>Look at the fitted parameter table:</p>
+<table>
+<thead>
+<tr>
+<th>T (y)</th>
+<th>ρ</th>
+<th>ν</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1.51</td>
+<td><strong>+0.030</strong></td>
+<td>0.338</td>
+</tr>
+<tr>
+<td>2.50</td>
+<td><strong>+0.999</strong></td>
+<td>0.037</td>
+</tr>
+</tbody>
+</table>
+<p>For <strong>equity</strong> smiles ρ should be solidly <strong>negative</strong> (downside skew → spot/vol anti-correlation).
+A ρ pinned at <strong>+0.999 on the boundary</strong> with ν collapsing to ~0.04 is the classic signature of a
+<strong>failed least-squares fit</strong> — the optimizer ran out of well-conditioned data and walked to the
+constraint. Cause: the long-dated slices have few, wide, illiquid quotes, and the fit is
+<strong>unweighted</strong>, so a handful of noisy far-wing points dominate. A desk would never ship this; the
+long end of the surface is effectively garbage.</p>
+<p><strong>Fix:</strong>
+- <strong>Weight residuals by vega and/or liquidity</strong> (bid-ask tightness, open interest). Equal-weighting
+  vol points over-fits the illiquid wings.
+- Add a <strong>fit-quality gate</strong>: reject/flag a slice if RMSE &gt; threshold, if a parameter hits a bound,
+  or if ρ flips sign versus neighboring maturities.
+- Consider calibrating ρ and ν with <strong>maturity smoothness penalties</strong> (they should evolve smoothly in
+  T), or fit the term structure jointly rather than fully independently per slice.
+- Sanity-print the per-slice residual RMSE alongside the params so degeneracy is <em>visible</em>.</p>
+<h3 id="22-no-no-arbitrage-enforcement-anywhere">2.2 No no-arbitrage enforcement anywhere</h3>
+<p>The IV surface is built by <code>griddata(method="linear")</code> over scattered points, and SABR slices are
+stitched independently. Nothing checks:
+- <strong>Butterfly (strike-convexity)</strong> arbitrage → implied risk-neutral density can go negative.
+- <strong>Calendar (total-variance monotonicity in T)</strong> arbitrage.</p>
+<p>Hagan's SABR is itself known to admit <strong>negative densities at low strikes for long T</strong>. For a learning
+notebook this is acceptable <em>if labeled</em>, but it's currently only mentioned as "Week-2 work." I'd
+promote at least a <strong>diagnostic</strong>: compute <code>w(k,T)=σ²T</code> and check ∂w/∂T ≥ 0 (calendar) and the
+Durrleman/butterfly condition on each slice. Cheap to add, and it teaches the single most important
+property of a <em>tradeable</em> surface.</p>
+<h3 id="23-two-different-year-conventions-sneak-into-the-same-plot">2.3 Two different "year" conventions sneak into the same plot</h3>
+<ul>
+<li>Option maturity: <code>T = days/365</code> (calendar) — correct for discounting/expiry.</li>
+<li>GARCH term structure x-axis: <code>horizon_years = days/252</code> (trading).</li>
+</ul>
+<p>In <strong>Section 6</strong> the ATM-implied term structure (365-based) is overlaid against the GARCH forecast
+(252-based) on a shared "maturity (years)" axis. They're ~4% apart in horizon units, so the curves are
+silently misaligned in T. Not catastrophic, but it's exactly the kind of unit-mixing that causes real
+P&amp;L attribution errors. Pick one clock for any chart that overlays two term structures (here: convert
+the GARCH horizon to calendar years, or annualize realized vol on a 365 basis for this comparison).</p>
+<hr />
+<h2 id="3-methodology-limitations-correct-for-a-learning-notebook-wrong-for-a-desk">3. Methodology limitations (correct for a learning notebook, wrong for a desk)</h2>
+<ul>
+<li><strong>Par yields treated as zero/CC rates.</strong> <code>r_cc = ln(1+y)</code> assumes annual compounding, but Treasury
+  CMT yields are <strong>bond-equivalent (semi-annual)</strong>; the cleaner map is <code>r_cc = 2·ln(1+y/2)</code>
+  (~4 bp difference at 4%, confirmed numerically). Bigger picture: a desk <strong>bootstraps</strong> zeros from
+  OIS/SOFR and extracts the <strong>option-implied forward via put–call parity</strong>, not from an assumed
+  dividend yield. The notebook already concedes this — good — but the forward error feeds directly into
+  the moneyness axis and the OTM/ITM split.</li>
+<li><strong>Linear interpolation of the rate curve.</strong> Linear-in-zero-rate can produce kinky/negative <em>forward</em>
+  rates. Desks interpolate in log-discount-factor or forward space. Minor at this horizon.</li>
+<li><strong>GARCH(1,1) with Gaussian innovations and no leverage term.</strong> Two issues for <em>equities</em>
+  specifically:
+  1. Returns are fat-tailed → use <strong>Student-t</strong> innovations (<code>dist="t"</code>).
+  2. The <strong>leverage effect</strong> (vol reacts more to down moves) is the time-series cousin of the very
+     skew the notebook spends Section 5 admiring — yet plain GARCH(1,1) is symmetric and can't see it.
+     <strong>GJR-GARCH or EGARCH</strong> would close that loop beautifully and is a one-line change in <code>arch</code>.</li>
+<li><strong>Close-to-close realized vol only.</strong> Fine, but noisy. Mentioning/adding a range-based estimator
+  (Parkinson / Garman-Klass / Yang-Zhang) using the OHLC you already pulled would cut estimator
+  variance materially — a natural teaching point on <em>estimation</em> vs <em>modeling</em> of vol.</li>
+<li><strong>P vs Q comparison (Section 6).</strong> Overlaying a GARCH <strong>physical-measure</strong> forecast against
+  <strong>risk-neutral</strong> implied and calling the gap the variance risk premium is directionally right and
+  well-narrated — just keep flagging that GARCH is a <em>point forecast under P</em>, not 𝔼^Q, so the "gap"
+  mixes a genuine premium with forecast error.</li>
+<li><strong>ATM by nearest-strike.</strong> ATM implied is taken as the quote nearest moneyness 1.0; cleaner to
+  <strong>interpolate to exactly ATM-forward</strong> (K=F) per slice so the term structure isn't jittered by the
+  strike grid.</li>
+<li><strong>Heston integration is fixed-truncation trapezoid</strong> (<code>u∈[1e-6,200]</code>, N=4096). Fine for illustration,
+  but accuracy degrades for very short T / deep wings. Carr–Madan FFT or an adaptive quadrature is the
+  production route.</li>
+</ul>
+<hr />
+<h2 id="4-data-reproducibility-the-quiet-desk-killer">4. Data &amp; reproducibility (the quiet desk-killer)</h2>
+<ul>
+<li><strong>yfinance option chains are retail-grade and asynchronous.</strong> Quotes can be stale, the spot <code>S0</code> is
+  "now" while option mids may be delayed, and bid/ask can be locked or one-sided. This injects noise
+  straight into every IV. At minimum, filter on <strong>volume / open interest</strong> (not just <code>mid&gt;0.05</code>) and
+  consider dropping quotes whose <code>lastTradeDate</code> is stale.</li>
+<li><strong>The dividend-yield patch is fragile.</strong> The <code>if q_div &gt; 0.05: q_div /= 100</code> heuristic papers over
+  yfinance's inconsistent units. It works today but will silently misprice forwards the day yfinance
+  changes format again. Prefer extracting the forward from <strong>put–call parity</strong> and sidestepping the
+  field entirely.</li>
+<li><strong>Non-reproducible by construction.</strong> Every run hits live data, so the surface (and this review's
+  numbers) change daily and results can't be reproduced or unit-tested. **Snapshot the raw chain + spot</li>
+<li>curve to a timestamped file** (parquet/CSV) and let the notebook run from the snapshot. This is the
+  single highest-leverage change for it to behave like real research code.</li>
+<li><strong><code>griddata</code> linear interpolation returns NaN outside the convex hull</strong> of the scattered points →
+  holes/edges on the rendered surface. Expected, but worth a note or a fill strategy.</li>
+</ul>
+<hr />
+<h2 id="5-engineering-code-quality-nits">5. Engineering / code-quality nits</h2>
+<ul>
+<li><strong><code>warnings.filterwarnings("ignore")</code> globally</strong> suppresses <em>everything</em>, including numerical
+  warnings (overflow in the Heston CF, optimizer non-convergence, RuntimeWarnings in <code>np.log</code>). Scope
+  it to the specific noisy calls, or at least re-enable around the calibration so failures are visible.</li>
+<li><strong><code>bs_vega</code> is defined but never used</strong> — <code>implied_vol</code> uses Brent, not Newton. Either wire vega into
+  a Newton step (with Brent fallback) or drop it; right now it's dead code that implies a code path that
+  doesn't exist.</li>
+<li><strong>Silent <code>except: continue</code></strong> around chain pulls swallows data errors. For a tool you'd at least
+  count/log skipped expiries so a half-empty surface doesn't look "fine."</li>
+<li><strong><code>iterrows()</code> in <code>build_iv_surface</code></strong> is slow and un-idiomatic; the BS/IV code is already vectorized,
+  so the inversion could be done array-wise per expiry. Negligible at this size, but it's the wrong
+  habit to bake in.</li>
+<li><strong>Short-maturity guard for IV.</strong> <code>bs_price</code>/<code>vega</code> divide by <code>σ√T</code>; very short expiries can blow up
+  <code>d1</code>. The notebook mitigates by skipping the nearest expiry (good), but an explicit small-T guard
+  would be more robust.</li>
+</ul>
+<hr />
+<h2 id="6-what-i-would-change-prioritized">6. What I would change — prioritized</h2>
+<p><strong>Tier 1 — correctness / trust</strong>
+1. <strong>Weight the SABR fit</strong> (vega/liquidity), add a <strong>fit-quality gate</strong>, and print per-slice RMSE. Kill
+   the ρ=+0.999 degeneracy.
+2. Add <strong>no-arbitrage diagnostics</strong> (calendar monotonicity of total variance + butterfly/convexity).
+3. <strong>Fix the 252-vs-365 axis mismatch</strong> in the implied-vs-realized overlay.</p>
+<p><strong>Tier 2 — realism</strong>
+4. <strong>Snapshot data</strong> to disk and run from the snapshot → reproducible.
+5. Extract the <strong>forward from put–call parity</strong> instead of the dividend-yield field.
+6. Switch GARCH to <strong>GJR/EGARCH + Student-t</strong> to capture leverage and fat tails (ties directly to the
+   skew story).</p>
+<p><strong>Tier 3 — polish</strong>
+7. Filter chains on <strong>liquidity (OI/volume)</strong>; handle stale quotes.
+8. Use the correct <strong>semi-annual→CC</strong> rate conversion; interpolate the curve in DF/forward space.
+9. Scope the warning suppression; remove or wire in <code>bs_vega</code>; vectorize the IV inversion.
+10. Interpolate ATM to <strong>exactly K=F</strong> for the term structure.</p>
+<hr />
+<h2 id="7-suggested-week-2-roadmap-extends-the-notebooks-own-outlook">7. Suggested Week-2+ roadmap (extends the notebook's own outlook)</h2>
+<ul>
+<li><strong>Calibrate Heston to the whole chain</strong> (it's currently illustrative) and compare its fitted surface
+  to SABR's stitched slices — a great lesson in global vs local fitting.</li>
+<li><strong>Add Dupire local vol</strong> (from the smoothed, arbitrage-free call surface) and contrast local vs
+  stochastic vol dynamics (sticky-strike vs sticky-delta behavior).</li>
+<li><strong>Greeks off the surface</strong>: vega, and the smile Greeks <strong>vanna/volga</strong> — the actual reason a desk
+  builds the surface in the first place.</li>
+<li><strong>Backtest the variance risk premium</strong>: systematically short variance (delta-hedged straddles or
+  variance swaps) and measure the realized premium and its drawdowns — turns Section 6 from a picture
+  into a strategy.</li>
+</ul>
+<hr />
+<h3 id="bottom-line">Bottom line</h3>
+<p>As a Week-1 learning notebook this is well above average: correct concepts, the right <em>stable</em> Heston
+form, honest caveats, and a clean theory→practice arc. The two things that separate it from real desk
+code are <strong>arbitrage-aware, liquidity-weighted calibration</strong> (the SABR long-end is currently broken)
+and <strong>reproducible, parity-derived data</strong>. Fix those two and it stops being a demo and starts being a
+tool.</p>
+<div class="doc-footer">Rendered from <code>Week1-Volatility_Surface_Review.md</code> · math by MathJax</div>
+</main>
+</body>
+</html>
